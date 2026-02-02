@@ -258,6 +258,20 @@ func main() {
 
 	logger.Info("Shutting down...")
 
+	// Send Close Frame
+	closeFrame := &v1.Frame{
+		Version:  v1.Version,
+		Type:     v1.FrameClose,
+		Flags:    v1.FlagNone,
+		StreamID: v1.StreamIDControl,
+	}
+	if err := connector.SendFrame(closeFrame); err != nil {
+		logger.Warn("Failed to send close frame", "error", err)
+	}
+
+	// Give some time for the write buffer to flush (writeLoop interval is 10ms)
+	time.Sleep(100 * time.Millisecond)
+
 	// Stop heartbeat
 	heartbeat.Stop()
 

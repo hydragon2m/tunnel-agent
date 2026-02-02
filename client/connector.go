@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -23,6 +24,7 @@ type Connector struct {
 	conn      net.Conn
 	connMu    sync.RWMutex
 	connected bool
+	sendCh    chan *v1.Frame // Channel for async writes
 
 	// Reconnection
 	maxRetries    int
@@ -47,7 +49,8 @@ func NewConnector(serverAddr string, tlsConfig *tls.Config) *Connector {
 	return &Connector{
 		serverAddr:    serverAddr,
 		tlsConfig:     tlsConfig,
-		maxRetries:    -1, // Unlimited
+		sendCh:        make(chan *v1.Frame, 100), // Buffer 100 frames
+		maxRetries:    -1,                        // Unlimited
 		retryInterval: 1 * time.Second,
 		backoffFactor: 2.0,
 		maxBackoff:    60 * time.Second,
@@ -118,6 +121,9 @@ func (c *Connector) connectWithRetry() error {
 			}
 
 			logger.Info("Connection established", "address", c.serverAddr)
+
+			// Start Write Loop
+			go c.writeLoop(conn, c.ctx)
 
 			if c.onConnected != nil {
 				c.onConnected(conn)
@@ -248,25 +254,83 @@ func (c *Connector) Close() error {
 	return c.Disconnect()
 }
 
-// SendFrame gửi frame qua connection
+// SendFrame gửi frame qua connection (async via channel)
 func (c *Connector) SendFrame(frame *v1.Frame) error {
 	c.connMu.RLock()
-	conn := c.conn
 	connected := c.connected
 	c.connMu.RUnlock()
 
-	if !connected || conn == nil {
+	if !connected {
 		return ErrNotConnected
 	}
 
-	err := v1.Encode(conn, frame)
-	if err == nil {
-		metrics.GetMetrics().IncrementFramesSent()
-	} else {
-		logger.Warn("Failed to send frame", "error", err, "type", frame.Type)
+	// Non-blocking send or timeout?
+	// For high throughput, we want non-blocking if possible, but if buffer full, we might drop or block.
+	// Blocking with timeout is safer?
+	// Let's try select default to avoid blocking main loops if network stalls.
+	select {
+	case c.sendCh <- frame:
+		return nil
+	default:
+		// Queue full
+		return fmt.Errorf("send queue full")
 	}
+}
 
-	return err
+// writeLoop handles buffered writing to the connection
+func (c *Connector) writeLoop(conn net.Conn, ctx context.Context) {
+	// 4KB buffer for coalescing
+	w := bufio.NewWriterSize(conn, 4*1024)
+	timer := time.NewTimer(10 * time.Millisecond)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case frame := <-c.sendCh:
+			// Encode to buffer
+			if err := v1.Encode(w, frame); err != nil {
+				logger.Error("Write loop encode error", "error", err)
+				c.Disconnect() // Trigger reconnect
+				return
+			}
+			metrics.GetMetrics().IncrementFramesSent()
+
+			// Check if more frames are immediately available to batch them
+			// If not, we might flush soon via timer or immediately if we want lower latency?
+			// To coalesce, we generally wait for the timer OR if buffer is full (happens validly inside Encode).
+			// But if we just wrote one packet and nothing else comes, we must flush.
+			// Reset timer to ensure we flush eventually if no more data comes.
+			// Is 10ms too high latency?
+			// Maybe: flush if channel is empty? Use 'default' selection?
+
+			// Optimization: Flush immediately if no more data in channel
+			if len(c.sendCh) == 0 {
+				if err := w.Flush(); err != nil {
+					logger.Error("Write loop flush error", "error", err)
+					c.Disconnect()
+					return
+				}
+			} else {
+				// If data pending, maybe just continue and let buffer fill?
+				// But we need to ensure we flush if buffer doesn't fill.
+				// Timer is running.
+				// Actually, simpler logic:
+				// Always write to buffer. Flush on timer tick.
+				// This guarantees bounded latency (10ms) and coalescing for high rates.
+			}
+
+		case <-timer.C:
+			if err := w.Flush(); err != nil {
+				logger.Error("Write loop flush error", "error", err)
+				c.Disconnect()
+				return
+			}
+			timer.Reset(10 * time.Millisecond)
+		}
+	}
 }
 
 // Context returns context for cancellation

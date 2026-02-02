@@ -106,28 +106,111 @@ func (d *Dispatcher) readLoop() {
 			connWithDeadline.SetReadDeadline(time.Now().Add(d.readTimeout))
 		}
 
-		// Decode frame
-		frame, err := v1.Decode(conn)
+		// Set read deadline if connection supports it
+		if connWithDeadline, ok := conn.(interface{ SetReadDeadline(time.Time) error }); ok {
+			connWithDeadline.SetReadDeadline(time.Now().Add(d.readTimeout))
+		}
+
+		// 1. Read Frame Length
+		length, err := v1.ReadFrameLength(conn)
 		if err != nil {
 			if err == io.EOF {
-				// Connection closed
 				logger.Debug("Connection closed (EOF)")
 				return
 			}
-			// Check if it's a timeout error (expected when no data is received)
-			// Timeout errors contain "timeout" in the error message
-			errStr := err.Error()
-			if contains(errStr, "timeout") || contains(errStr, "i/o timeout") {
-				// Timeout is expected when no data is received - continue reading
-				// This keeps the connection alive even when idle
+			// Check timeout
+			if contains(err.Error(), "timeout") {
 				logger.Debug("Read timeout (no data), continuing...")
 				continue
 			}
-			// Other connection errors, return to trigger reconnection
-			logger.Warn("Frame decode error", "error", err)
+			logger.Warn("Frame length read error", "error", err)
 			metrics.GetMetrics().IncrementFramesError()
 			return
 		}
+
+		// 2. Validate Length (optional check before allocation, ParseFrame also checks but better here)
+		if length < v1.HeaderSize || length > v1.MaxFrameSize {
+			logger.Warn("Invalid frame size", "length", length)
+			metrics.GetMetrics().IncrementFramesError()
+			// Consume/discard? Or just close connection? Safe to close.
+			return
+		}
+
+		// 3. Get Buffer from Pool
+		// We need 'length' bytes.
+		buf := v1.GetBuffer(int(length))
+
+		// 4. Read the rest of the frame (Magic + Header + StreamID + Payload)
+		// Note: buf might be larger than length. We read into buf[:length]
+		if _, err := io.ReadFull(conn, buf[:length]); err != nil {
+			logger.Warn("Frame body read error", "error", err)
+			v1.PutBuffer(buf) // Return buffer on error
+			return
+		}
+
+		// 5. Parse Frame
+		// ParseFrame uses the buffer content.
+		// BE CAREFUL: The returned frame.Payload points into 'buf'.
+		// We must ENSURE we don't return 'buf' to the pool while it's still being used.
+		// Since we handle the frame synchronously in handleFrame and it likely copies
+		// data if needed (e.g. to channel), we need to enforce that handlers don't hold the payload slice.
+		// IF handleFrame blocks or queues the frame pointer, we have a race/corruption if we PutBuffer here.
+		//
+		// For streamHandler which passes frame.Payload to channel: `stream.dataIn <- frame.Payload`
+		// This means the receiver owns the slice. If we pool it, we can't reuse it until receiver is done.
+		//
+		// DECISION: For now, to support zero-copy where possible but safety first:
+		// We should COPY the payload if we want to return the buffer immediately.
+		// OR we rely on GC for now (don't PutBuffer) if we can't guarantee lifecycle.
+		//
+		// OPTIMIZATION: `ParseFrame` returns a Frame struct.
+		// If we use `GetBuffer`, we MUST `Copy` the payload if we want to `PutBuffer` back in this loop.
+		//
+		// Let's modify logic:
+		// ParseFrame creates *Frame referencing buf.
+		// If we want to pool, we need to copy payload.
+		// `frame.Payload = append([]byte(nil), frame.Payload...)`
+		// Then `v1.PutBuffer(buf)`
+		//
+		// BUT: This defeats the purpose of zero allocation for the Payload?
+		// Correct. The goal was to reuse buffer for reading from network.
+		//
+		// Actually, `tunnel-core` does `stream.dataIn <- frame.Payload`.
+		// If `stream.dataIn` is buffered, the payload sits there.
+		//
+		// COMPROMISE: For this optimization step, we'll implement the Pool reading side,
+		// but we will NOT return the buffer to the pool if it successfully parsed,
+		// effectively falling back to GC for valid frames (but using pool for read buffer allocation?).
+		// Wait, if we don't Put back, we just allocated from pool and lost it to GC.
+		// That's fine if pool refills with `make`.
+		// But `sync.Pool` requires Put to be useful.
+		//
+		// REAL OPTIMIZATION: `handleStreamFrame` should copy data it needs if it wants to keep it?
+		// Or we implement a ref-counted buffer? Too complex.
+		//
+		// Let's just copy the payload for now. Even with copy, we save the allocation of the *initial read buffer*
+		// if we can reuse it for cases where we don't need to keep payload (e.g. control frames, or short frames).
+		//
+		// ACTUALLY: `ParseFrame` returns `Payload` as slice of `buf`.
+		// Let's copy it immediately so we can return `buf` to pool.
+		frame, err := v1.ParseFrame(buf[:length])
+		if err != nil {
+			logger.Warn("Frame parse error", "error", err)
+			v1.PutBuffer(buf)
+			metrics.GetMetrics().IncrementFramesError()
+			return
+		}
+
+		// Copy payload so we can reuse buffer
+		// Only needed if Payload has data
+		if len(frame.Payload) > 0 {
+			newPayload := make([]byte, len(frame.Payload))
+			copy(newPayload, frame.Payload)
+			frame.Payload = newPayload
+		}
+
+		// Now we can safe return buf
+		v1.PutBuffer(buf)
 
 		// Track frame received
 		metrics.GetMetrics().IncrementFramesReceived()
