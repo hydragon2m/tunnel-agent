@@ -169,7 +169,7 @@ curl http://localhost:9091/health
 ./agent \
   -server=localhost:8443 \
   -token=your-token \
-  -local=http://localhost:3000 \
+  -local=http://localhost:3003 \
   -log-level=info \
   -log-json \
   -metrics \

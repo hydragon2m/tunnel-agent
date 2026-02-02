@@ -51,7 +51,7 @@ go build ./cmd/agent
 ### Run
 
 ```bash
-./agent -server=localhost:8443 -token=your-token -local=http://localhost:3000
+./agent -server=localhost:8443 -token=your-token -local=http://localhost:3003
 ```
 
 ## ⚙️ Configuration
@@ -75,7 +75,7 @@ go build ./cmd/agent
 
 #### Local Service
 
-- `-local string`: Local service URL (default: "http://localhost:3000")
+- `-local string`: Local service URL (default: "http://localhost:3003")
 
 #### Timeouts
 
@@ -117,17 +117,17 @@ go build ./cmd/agent
 
 ```bash
 # Connect to Core Server
-./agent -server=localhost:8443 -token=my-token -local=http://localhost:3000
+./agent -server=localhost:8443 -token=my-token -local=http://localhost:3003
 ```
 
 ### With TLS
 
 ```bash
 # Use TLS (default)
-./agent -server=core.example.com:8443 -token=my-token -local=http://localhost:3000 -tls
+./agent -server=core.example.com:8443 -token=my-token -local=http://localhost:3003 -tls
 
 # Skip certificate verification (development only)
-./agent -server=core.example.com:8443 -token=my-token -local=http://localhost:3000 -skip-verify
+./agent -server=core.example.com:8443 -token=my-token -local=http://localhost:3003 -skip-verify
 ```
 
 ### With Logging
@@ -317,10 +317,10 @@ Agent tự động reconnect khi connection bị đứt:
 
 ```bash
 # Check local service URL
-curl http://localhost:3000/health
+curl http://localhost:3003/health
 
 # Verify agent can reach local service
-./agent -local=http://localhost:3000 -log-level=debug
+./agent -local=http://localhost:3003 -log-level=debug
 ```
 
 **Problem**: Timeout errors
@@ -384,7 +384,7 @@ curl http://localhost:9091/metrics
 
 ```bash
 # Start agent
-./agent -server=localhost:8443 -token=test-token -local=http://localhost:3000 -log-level=debug
+./agent -server=localhost:8443 -token=test-token -local=http://localhost:3003 -log-level=debug
 
 # In another terminal, check metrics
 curl http://localhost:9091/health

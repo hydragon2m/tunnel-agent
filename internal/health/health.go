@@ -44,13 +44,13 @@ func GetHealthChecker() *HealthChecker {
 func (hc *HealthChecker) RegisterCheck(name string) *Check {
 	hc.mu.Lock()
 	defer hc.mu.Unlock()
-	
+
 	check := &Check{
 		Name:      name,
 		Status:    HealthStatusHealthy,
 		LastCheck: time.Now(),
 	}
-	
+
 	hc.checks[name] = check
 	return check
 }
@@ -59,7 +59,7 @@ func (hc *HealthChecker) RegisterCheck(name string) *Check {
 func (hc *HealthChecker) GetCheck(name string) (*Check, bool) {
 	hc.mu.RLock()
 	defer hc.mu.RUnlock()
-	
+
 	check, ok := hc.checks[name]
 	return check, ok
 }
@@ -68,7 +68,7 @@ func (hc *HealthChecker) GetCheck(name string) (*Check, bool) {
 func (c *Check) UpdateCheck(status HealthStatus, message string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	c.Status = status
 	c.Message = message
 	c.LastCheck = time.Now()
@@ -78,7 +78,7 @@ func (c *Check) UpdateCheck(status HealthStatus, message string) {
 func (c *Check) GetStatus() (HealthStatus, string, time.Time) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	return c.Status, c.Message, c.LastCheck
 }
 
@@ -86,14 +86,14 @@ func (c *Check) GetStatus() (HealthStatus, string, time.Time) {
 func (hc *HealthChecker) GetOverallStatus() HealthStatus {
 	hc.mu.RLock()
 	defer hc.mu.RUnlock()
-	
+
 	if len(hc.checks) == 0 {
 		return HealthStatusHealthy
 	}
-	
+
 	hasUnhealthy := false
 	hasDegraded := false
-	
+
 	for _, check := range hc.checks {
 		status, _, _ := check.GetStatus()
 		switch status {
@@ -103,14 +103,14 @@ func (hc *HealthChecker) GetOverallStatus() HealthStatus {
 			hasDegraded = true
 		}
 	}
-	
+
 	if hasUnhealthy {
 		return HealthStatusUnhealthy
 	}
 	if hasDegraded {
 		return HealthStatusDegraded
 	}
-	
+
 	return HealthStatusHealthy
 }
 
@@ -118,11 +118,10 @@ func (hc *HealthChecker) GetOverallStatus() HealthStatus {
 func (hc *HealthChecker) GetAllChecks() map[string]*Check {
 	hc.mu.RLock()
 	defer hc.mu.RUnlock()
-	
+
 	result := make(map[string]*Check)
 	for name, check := range hc.checks {
 		result[name] = check
 	}
 	return result
 }
-

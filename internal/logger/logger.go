@@ -75,4 +75,3 @@ func Error(msg string, args ...any) {
 func WithError(err error) *slog.Logger {
 	return GetLogger().With("error", err)
 }
-

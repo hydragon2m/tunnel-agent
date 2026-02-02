@@ -11,11 +11,11 @@ type Stream struct {
 	State     StreamState
 	CreatedAt time.Time
 	Metadata  map[string]string
-	
+
 	// Data channels
-	dataOut   chan []byte
-	closeCh   chan struct{}
-	
+	dataOut chan []byte
+	closeCh chan struct{}
+
 	mu sync.RWMutex
 }
 
@@ -34,7 +34,7 @@ const (
 type StreamManager struct {
 	streams   map[uint32]*Stream
 	streamsMu sync.RWMutex
-	
+
 	// Callbacks
 	onStreamCreated func(streamID uint32)
 	onStreamClosed  func(streamID uint32)
@@ -61,11 +61,11 @@ func (sm *StreamManager) SetOnStreamClosed(callback func(streamID uint32)) {
 func (sm *StreamManager) CreateStream(streamID uint32) (*Stream, error) {
 	sm.streamsMu.Lock()
 	defer sm.streamsMu.Unlock()
-	
+
 	if _, exists := sm.streams[streamID]; exists {
 		return nil, ErrStreamAlreadyExists
 	}
-	
+
 	stream := &Stream{
 		ID:        streamID,
 		State:     StreamStateInit,
@@ -74,13 +74,13 @@ func (sm *StreamManager) CreateStream(streamID uint32) (*Stream, error) {
 		dataOut:   make(chan []byte, 10),
 		closeCh:   make(chan struct{}),
 	}
-	
+
 	sm.streams[streamID] = stream
-	
+
 	if sm.onStreamCreated != nil {
 		sm.onStreamCreated(streamID)
 	}
-	
+
 	return stream, nil
 }
 
@@ -88,7 +88,7 @@ func (sm *StreamManager) CreateStream(streamID uint32) (*Stream, error) {
 func (sm *StreamManager) GetStream(streamID uint32) (*Stream, bool) {
 	sm.streamsMu.RLock()
 	defer sm.streamsMu.RUnlock()
-	
+
 	stream, ok := sm.streams[streamID]
 	return stream, ok
 }
@@ -97,22 +97,22 @@ func (sm *StreamManager) GetStream(streamID uint32) (*Stream, bool) {
 func (sm *StreamManager) CloseStream(streamID uint32) error {
 	sm.streamsMu.Lock()
 	defer sm.streamsMu.Unlock()
-	
+
 	stream, exists := sm.streams[streamID]
 	if !exists {
 		return ErrStreamNotFound
 	}
-	
+
 	stream.setState(StreamStateClosed)
 	close(stream.closeCh)
 	// Note: Don't close dataOut channel here as it might be used by other goroutines
 	// Channel will be garbage collected when stream is deleted
 	delete(sm.streams, streamID)
-	
+
 	if sm.onStreamClosed != nil {
 		sm.onStreamClosed(streamID)
 	}
-	
+
 	return nil
 }
 
@@ -160,4 +160,3 @@ func (s *Stream) GetMetadata(key string) (string, bool) {
 	value, ok := s.Metadata[key]
 	return value, ok
 }
-

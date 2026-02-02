@@ -9,42 +9,42 @@ import (
 // Metrics collects agent metrics
 type Metrics struct {
 	// Connection metrics
-	ConnectionsTotal    int64
-	ConnectionsActive   int64
-	ReconnectionsTotal  int64
-	ReconnectionErrors  int64
-	
+	ConnectionsTotal   int64
+	ConnectionsActive  int64
+	ReconnectionsTotal int64
+	ReconnectionErrors int64
+
 	// Stream metrics
-	StreamsTotal        int64
-	StreamsActive       int64
-	StreamsCompleted   int64
-	StreamsFailed      int64
-	
+	StreamsTotal     int64
+	StreamsActive    int64
+	StreamsCompleted int64
+	StreamsFailed    int64
+
 	// Request metrics
-	RequestsTotal       int64
-	RequestsSuccess    int64
-	RequestsFailed     int64
-	RequestDuration    int64 // microseconds
-	
+	RequestsTotal   int64
+	RequestsSuccess int64
+	RequestsFailed  int64
+	RequestDuration int64 // microseconds
+
 	// Frame metrics
-	FramesReceived      int64
-	FramesSent          int64
-	FramesError         int64
-	
+	FramesReceived int64
+	FramesSent     int64
+	FramesError    int64
+
 	// Heartbeat metrics
-	HeartbeatsSent      int64
-	HeartbeatsFailed   int64
-	
+	HeartbeatsSent   int64
+	HeartbeatsFailed int64
+
 	// Local service metrics
-	LocalRequestsTotal  int64
-	LocalRequestsError  int64
+	LocalRequestsTotal   int64
+	LocalRequestsError   int64
 	LocalRequestDuration int64 // microseconds
-	
+
 	// Timestamps
-	LastConnectionTime  time.Time
-	LastRequestTime     time.Time
-	LastHeartbeatTime   time.Time
-	
+	LastConnectionTime time.Time
+	LastRequestTime    time.Time
+	LastHeartbeatTime  time.Time
+
 	mu sync.RWMutex
 }
 
@@ -193,58 +193,57 @@ func (m *Metrics) SetLastHeartbeatTime(t time.Time) {
 func (m *Metrics) GetSnapshot() MetricsSnapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	return MetricsSnapshot{
 		ConnectionsTotal:     atomic.LoadInt64(&m.ConnectionsTotal),
 		ConnectionsActive:    atomic.LoadInt64(&m.ConnectionsActive),
 		ReconnectionsTotal:   atomic.LoadInt64(&m.ReconnectionsTotal),
 		ReconnectionErrors:   atomic.LoadInt64(&m.ReconnectionErrors),
-		StreamsTotal:        atomic.LoadInt64(&m.StreamsTotal),
-		StreamsActive:       atomic.LoadInt64(&m.StreamsActive),
-		StreamsCompleted:   atomic.LoadInt64(&m.StreamsCompleted),
-		StreamsFailed:       atomic.LoadInt64(&m.StreamsFailed),
-		RequestsTotal:       atomic.LoadInt64(&m.RequestsTotal),
-		RequestsSuccess:    atomic.LoadInt64(&m.RequestsSuccess),
-		RequestsFailed:     atomic.LoadInt64(&m.RequestsFailed),
-		RequestDuration:    atomic.LoadInt64(&m.RequestDuration),
-		FramesReceived:     atomic.LoadInt64(&m.FramesReceived),
-		FramesSent:         atomic.LoadInt64(&m.FramesSent),
-		FramesError:        atomic.LoadInt64(&m.FramesError),
-		HeartbeatsSent:     atomic.LoadInt64(&m.HeartbeatsSent),
-		HeartbeatsFailed:   atomic.LoadInt64(&m.HeartbeatsFailed),
-		LocalRequestsTotal: atomic.LoadInt64(&m.LocalRequestsTotal),
-		LocalRequestsError: atomic.LoadInt64(&m.LocalRequestsError),
+		StreamsTotal:         atomic.LoadInt64(&m.StreamsTotal),
+		StreamsActive:        atomic.LoadInt64(&m.StreamsActive),
+		StreamsCompleted:     atomic.LoadInt64(&m.StreamsCompleted),
+		StreamsFailed:        atomic.LoadInt64(&m.StreamsFailed),
+		RequestsTotal:        atomic.LoadInt64(&m.RequestsTotal),
+		RequestsSuccess:      atomic.LoadInt64(&m.RequestsSuccess),
+		RequestsFailed:       atomic.LoadInt64(&m.RequestsFailed),
+		RequestDuration:      atomic.LoadInt64(&m.RequestDuration),
+		FramesReceived:       atomic.LoadInt64(&m.FramesReceived),
+		FramesSent:           atomic.LoadInt64(&m.FramesSent),
+		FramesError:          atomic.LoadInt64(&m.FramesError),
+		HeartbeatsSent:       atomic.LoadInt64(&m.HeartbeatsSent),
+		HeartbeatsFailed:     atomic.LoadInt64(&m.HeartbeatsFailed),
+		LocalRequestsTotal:   atomic.LoadInt64(&m.LocalRequestsTotal),
+		LocalRequestsError:   atomic.LoadInt64(&m.LocalRequestsError),
 		LocalRequestDuration: atomic.LoadInt64(&m.LocalRequestDuration),
-		LastConnectionTime:  m.LastConnectionTime,
-		LastRequestTime:     m.LastRequestTime,
-		LastHeartbeatTime:   m.LastHeartbeatTime,
+		LastConnectionTime:   m.LastConnectionTime,
+		LastRequestTime:      m.LastRequestTime,
+		LastHeartbeatTime:    m.LastHeartbeatTime,
 	}
 }
 
 // MetricsSnapshot is a snapshot of metrics
 type MetricsSnapshot struct {
-	ConnectionsTotal      int64
-	ConnectionsActive     int64
-	ReconnectionsTotal    int64
-	ReconnectionErrors    int64
-	StreamsTotal          int64
-	StreamsActive         int64
-	StreamsCompleted      int64
-	StreamsFailed         int64
-	RequestsTotal         int64
-	RequestsSuccess       int64
-	RequestsFailed        int64
-	RequestDuration       int64
-	FramesReceived        int64
-	FramesSent            int64
-	FramesError           int64
-	HeartbeatsSent        int64
-	HeartbeatsFailed      int64
-	LocalRequestsTotal    int64
-	LocalRequestsError    int64
-	LocalRequestDuration  int64
-	LastConnectionTime    time.Time
-	LastRequestTime       time.Time
-	LastHeartbeatTime     time.Time
+	ConnectionsTotal     int64
+	ConnectionsActive    int64
+	ReconnectionsTotal   int64
+	ReconnectionErrors   int64
+	StreamsTotal         int64
+	StreamsActive        int64
+	StreamsCompleted     int64
+	StreamsFailed        int64
+	RequestsTotal        int64
+	RequestsSuccess      int64
+	RequestsFailed       int64
+	RequestDuration      int64
+	FramesReceived       int64
+	FramesSent           int64
+	FramesError          int64
+	HeartbeatsSent       int64
+	HeartbeatsFailed     int64
+	LocalRequestsTotal   int64
+	LocalRequestsError   int64
+	LocalRequestDuration int64
+	LastConnectionTime   time.Time
+	LastRequestTime      time.Time
+	LastHeartbeatTime    time.Time
 }
-

@@ -10,30 +10,30 @@ import (
 
 // Authenticator xử lý authentication với Core Server
 type Authenticator struct {
-	token      string
-	agentID    string
-	version    string
+	token        string
+	agentID      string
+	version      string
 	capabilities []string
-	metadata   map[string]string
-	timeout    time.Duration
+	metadata     map[string]string
+	timeout      time.Duration
 }
 
 // AuthRequest là payload của FrameAuth
 type AuthRequest struct {
-	Token       string            `json:"token"`
-	AgentID     string            `json:"agent_id,omitempty"`
-	Version     string            `json:"version,omitempty"`
-	Capabilities []string         `json:"capabilities,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Token        string            `json:"token"`
+	AgentID      string            `json:"agent_id,omitempty"`
+	Version      string            `json:"version,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
 // AuthResponse là payload của FrameAuth response
 type AuthResponse struct {
-	Success    bool              `json:"success"`
-	AgentID    string            `json:"agent_id,omitempty"`
-	ServerTime int64             `json:"server_time,omitempty"`
+	Success    bool                   `json:"success"`
+	AgentID    string                 `json:"agent_id,omitempty"`
+	ServerTime int64                  `json:"server_time,omitempty"`
 	Config     map[string]interface{} `json:"config,omitempty"`
-	Error      string            `json:"error,omitempty"`
+	Error      string                 `json:"error,omitempty"`
 }
 
 // NewAuthenticator tạo Authenticator mới
@@ -57,12 +57,12 @@ func (a *Authenticator) CreateAuthFrame() (*v1.Frame, error) {
 		Capabilities: a.capabilities,
 		Metadata:     a.metadata,
 	}
-	
+
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &v1.Frame{
 		Version:  v1.Version,
 		Type:     v1.FrameAuth,
@@ -77,29 +77,28 @@ func (a *Authenticator) HandleAuthResponse(frame *v1.Frame) error {
 	if frame.Type != v1.FrameAuth {
 		return ErrInvalidFrame
 	}
-	
+
 	if !frame.IsControlFrame() {
 		return ErrInvalidFrame
 	}
-	
+
 	if !frame.IsAck() {
 		return ErrAuthFailed
 	}
-	
+
 	var resp AuthResponse
 	if err := json.Unmarshal(frame.Payload, &resp); err != nil {
 		return err
 	}
-	
+
 	if !resp.Success {
 		return fmt.Errorf("auth failed: %s", resp.Error)
 	}
-	
+
 	// Update agent ID if provided by server
 	if resp.AgentID != "" {
 		a.agentID = resp.AgentID
 	}
-	
+
 	return nil
 }
-

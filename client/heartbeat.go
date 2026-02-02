@@ -4,24 +4,24 @@ import (
 	"context"
 	"time"
 
-	v1 "github.com/hydragon2m/tunnel-protocol/go/v1"
 	"github.com/hydragon2m/tunnel-agent/internal/logger"
 	"github.com/hydragon2m/tunnel-agent/internal/metrics"
+	v1 "github.com/hydragon2m/tunnel-protocol/go/v1"
 )
 
 // Heartbeat gửi periodic heartbeat đến Core Server
 type Heartbeat struct {
-	connector  *Connector
-	interval   time.Duration
-	ctx        context.Context
-	cancel     context.CancelFunc
-	running    bool
+	connector *Connector
+	interval  time.Duration
+	ctx       context.Context
+	cancel    context.CancelFunc
+	running   bool
 }
 
 // NewHeartbeat tạo Heartbeat mới
 func NewHeartbeat(connector *Connector, interval time.Duration) *Heartbeat {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	return &Heartbeat{
 		connector: connector,
 		interval:  interval,
@@ -36,7 +36,7 @@ func (h *Heartbeat) Start() {
 		return
 	}
 	h.running = true
-	
+
 	go h.heartbeatLoop()
 }
 
@@ -50,7 +50,7 @@ func (h *Heartbeat) Stop() {
 func (h *Heartbeat) heartbeatLoop() {
 	ticker := time.NewTicker(h.interval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-h.ctx.Done():
@@ -65,7 +65,7 @@ func (h *Heartbeat) heartbeatLoop() {
 					StreamID: v1.StreamIDControl,
 					Payload:  nil,
 				}
-				
+
 				err := h.connector.SendFrame(frame)
 				if err != nil {
 					metrics.GetMetrics().IncrementHeartbeatsFailed()
@@ -78,4 +78,3 @@ func (h *Heartbeat) heartbeatLoop() {
 		}
 	}
 }
-
