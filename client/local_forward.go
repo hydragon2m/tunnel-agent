@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hydragon2m/tunnel-agent/internal/logger"
 	"github.com/hydragon2m/tunnel-agent/internal/metrics"
 )
 
@@ -37,36 +36,32 @@ func NewLocalForwarder(localURL string, timeout time.Duration) *LocalForwarder {
 }
 
 // ForwardRequest forward request từ Core đến local service
-// Returns response data
-func (lf *LocalForwarder) ForwardRequest(ctx context.Context, stream *Stream, requestData []byte) ([]byte, error) {
+func (lf *LocalForwarder) ForwardRequest(ctx context.Context, stream *Stream, initialPayload []byte) error {
 	startTime := time.Now()
 	metrics.GetMetrics().IncrementLocalRequestsTotal()
 	metrics.GetMetrics().IncrementRequestsTotal()
 
-	// Parse HTTP request from payload
-	method, path, query, headers, body, err := lf.parseRequest(requestData)
+	// 1. Parse HTTP request headers from initial payload
+	method, path, query, headers, initialBody, err := lf.parseRequest(initialPayload)
 	if err != nil {
 		metrics.GetMetrics().IncrementLocalRequestsError()
 		metrics.GetMetrics().IncrementRequestsFailed()
-		logger.Error("Failed to parse request", "error", err)
-		return nil, fmt.Errorf("failed to parse request: %w", err)
+		return fmt.Errorf("failed to parse request: %w", err)
 	}
 
-	// Build local URL
+	// 2. Build local URL
 	localURL := lf.buildLocalURL(path, query)
 
-	logger.Debug("Forwarding request", "method", method, "url", localURL)
+	// 3. Create request body from initial data + the stream itself for remaining data
+	bodyReader := io.MultiReader(bytes.NewReader(initialBody), stream)
 
-	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, method, localURL, bytes.NewReader(body))
+	// 4. Create local HTTP request
+	httpReq, err := http.NewRequestWithContext(ctx, method, localURL, bodyReader)
 	if err != nil {
-		metrics.GetMetrics().IncrementLocalRequestsError()
-		metrics.GetMetrics().IncrementRequestsFailed()
-		logger.Error("Failed to create HTTP request", "error", err)
-		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
+		return fmt.Errorf("failed to create local request: %w", err)
 	}
 
-	// Copy headers (except Host)
+	// Copy headers
 	for key, values := range headers {
 		if strings.ToLower(key) != "host" {
 			for _, value := range values {
@@ -75,38 +70,48 @@ func (lf *LocalForwarder) ForwardRequest(ctx context.Context, stream *Stream, re
 		}
 	}
 
-	// Execute request
+	// 5. Execute local request
 	resp, err := lf.httpClient.Do(httpReq)
 	if err != nil {
 		metrics.GetMetrics().IncrementLocalRequestsError()
-		metrics.GetMetrics().IncrementRequestsFailed()
-		logger.Error("Local service request failed", "error", err, "url", localURL)
-		return nil, fmt.Errorf("local service error: %w", err)
+		return fmt.Errorf("local service request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Read response body
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		metrics.GetMetrics().IncrementLocalRequestsError()
-		metrics.GetMetrics().IncrementRequestsFailed()
-		logger.Error("Failed to read response body", "error", err)
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+	// 6. Write response line and headers back to the stream
+	if err := lf.writeResponseHeader(stream, resp); err != nil {
+		return fmt.Errorf("failed to write response headers: %w", err)
 	}
 
-	// Build response payload
-	responseData := lf.buildResponse(resp, respBody)
+	// 7. Stream response body back to the tunnel stream
+	_, err = io.Copy(stream, resp.Body)
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("failed to stream response body: %w", err)
+	}
 
 	// Record metrics
 	duration := time.Since(startTime)
 	metrics.GetMetrics().RecordLocalRequestDuration(duration)
-	metrics.GetMetrics().RecordRequestDuration(duration)
 	metrics.GetMetrics().IncrementRequestsSuccess()
 	metrics.GetMetrics().SetLastRequestTime(time.Now())
 
-	logger.Debug("Request completed", "method", method, "url", localURL, "status", resp.StatusCode, "duration", duration)
+	return nil
+}
 
-	return responseData, nil
+// writeResponseHeader writes HTTP response line and headers to the stream
+func (lf *LocalForwarder) writeResponseHeader(w io.Writer, resp *http.Response) error {
+	var buf bytes.Buffer
+	// Response line
+	buf.WriteString(fmt.Sprintf("%s %d %s\r\n", resp.Proto, resp.StatusCode, resp.Status))
+	// Headers
+	for key, values := range resp.Header {
+		for _, value := range values {
+			buf.WriteString(fmt.Sprintf("%s: %s\r\n", key, value))
+		}
+	}
+	buf.WriteString("\r\n")
+	_, err := w.Write(buf.Bytes())
+	return err
 }
 
 // parseRequest parse HTTP request từ payload

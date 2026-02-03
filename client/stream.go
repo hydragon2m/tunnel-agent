@@ -1,8 +1,11 @@
 package client
 
 import (
+	"io"
 	"sync"
 	"time"
+
+	v1 "github.com/hydragon2m/tunnel-protocol/go/v1"
 )
 
 // Stream đại diện cho 1 stream từ Core Server
@@ -16,7 +19,11 @@ type Stream struct {
 	dataOut chan []byte
 	closeCh chan struct{}
 
-	mu sync.RWMutex
+	connector *Connector // Reference to connector for writing
+	mu        sync.RWMutex
+
+	// Internal read buffer for Read interface
+	readBuf []byte
 }
 
 // StreamState là state của stream
@@ -38,12 +45,15 @@ type StreamManager struct {
 	// Callbacks
 	onStreamCreated func(streamID uint32)
 	onStreamClosed  func(streamID uint32)
+
+	connector *Connector
 }
 
 // NewStreamManager tạo StreamManager mới
-func NewStreamManager() *StreamManager {
+func NewStreamManager(connector *Connector) *StreamManager {
 	return &StreamManager{
-		streams: make(map[uint32]*Stream),
+		streams:   make(map[uint32]*Stream),
+		connector: connector,
 	}
 }
 
@@ -71,8 +81,9 @@ func (sm *StreamManager) CreateStream(streamID uint32) (*Stream, error) {
 		State:     StreamStateInit,
 		CreatedAt: time.Now(),
 		Metadata:  make(map[string]string),
-		dataOut:   make(chan []byte, 10),
+		dataOut:   make(chan []byte, 100),
 		closeCh:   make(chan struct{}),
+		connector: sm.connector,
 	}
 
 	sm.streams[streamID] = stream
@@ -138,6 +149,59 @@ func (s *Stream) DataOut() chan<- []byte {
 // CloseCh returns close channel
 func (s *Stream) CloseCh() <-chan struct{} {
 	return s.closeCh
+}
+
+// Read implements io.Reader
+func (s *Stream) Read(p []byte) (n int, err error) {
+	if s.readBuf != nil && len(s.readBuf) > 0 {
+		n = copy(p, s.readBuf)
+		s.readBuf = s.readBuf[n:]
+		return n, nil
+	}
+
+	select {
+	case data, ok := <-s.dataOut:
+		if !ok {
+			return 0, io.EOF
+		}
+		n = copy(p, data)
+		if n < len(data) {
+			s.readBuf = data[n:]
+		}
+		return n, nil
+	case <-s.closeCh:
+		return 0, io.EOF
+	}
+}
+
+// Write implements io.Writer
+func (s *Stream) Write(p []byte) (n int, err error) {
+	frame := &v1.Frame{
+		Version:  v1.Version,
+		Type:     v1.FrameData,
+		Flags:    v1.FlagNone,
+		StreamID: s.ID,
+		Payload:  p,
+	}
+
+	if err := s.connector.SendFrame(frame); err != nil {
+		return 0, err
+	}
+
+	return len(p), nil
+}
+
+// Close implements io.Closer
+func (s *Stream) Close() error {
+	frame := &v1.Frame{
+		Version:  v1.Version,
+		Type:     v1.FrameData,
+		Flags:    v1.FlagEndStream,
+		StreamID: s.ID,
+		Payload:  nil,
+	}
+	_ = s.connector.SendFrame(frame)
+	return nil
 }
 
 // SetMetadata set metadata

@@ -142,7 +142,7 @@ func main() {
 	dispatcher := client.NewDispatcher(*readTimeout)
 
 	// Create stream manager
-	streamManager := client.NewStreamManager()
+	streamManager := client.NewStreamManager(connector)
 
 	// Create local forwarder
 	forwarder := client.NewLocalForwarder(*localURL, *requestTimeout)
@@ -418,7 +418,7 @@ func handleStreamFrame(
 			ctx, cancel := context.WithTimeout(context.Background(), *requestTimeout)
 			defer cancel()
 
-			responseData, err := forwarder.ForwardRequest(ctx, stream, frame.Payload)
+			err := forwarder.ForwardRequest(ctx, stream, frame.Payload)
 			if err != nil {
 				logger.Error("Failed to forward request", "error", err, "streamID", frame.StreamID)
 				metrics.GetMetrics().IncrementStreamsFailed()
@@ -433,36 +433,13 @@ func handleStreamFrame(
 					Payload:  []byte(err.Error()),
 				}
 				_ = connector.SendFrame(errorFrame)
-				streamManager.CloseStream(frame.StreamID)
-				return
+			} else {
+				// Update health check on success
+				localServiceCheck.UpdateCheck(health.HealthStatusHealthy, "Local service responding")
 			}
 
-			// Update health check on success
-			localServiceCheck.UpdateCheck(health.HealthStatusHealthy, "Local service responding")
-
-			// Send response
-			dataFrame := &v1.Frame{
-				Version:  v1.Version,
-				Type:     v1.FrameData,
-				Flags:    v1.FlagNone,
-				StreamID: frame.StreamID,
-				Payload:  responseData,
-			}
-			if err := connector.SendFrame(dataFrame); err != nil {
-				logger.Error("Failed to send response", "error", err, "streamID", frame.StreamID)
-			}
-
-			// Send end stream
-			endFrame := &v1.Frame{
-				Version:  v1.Version,
-				Type:     v1.FrameData,
-				Flags:    v1.FlagEndStream,
-				StreamID: frame.StreamID,
-				Payload:  nil,
-			}
-			_ = connector.SendFrame(endFrame)
-
-			// Close stream
+			// EndStream flag is sent by stream.Close() which forwarder might have called or handle here
+			_ = stream.Close()
 			streamManager.CloseStream(frame.StreamID)
 		}()
 
