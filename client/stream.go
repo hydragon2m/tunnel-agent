@@ -116,8 +116,8 @@ func (sm *StreamManager) CloseStream(streamID uint32) error {
 
 	stream.setState(StreamStateClosed)
 	close(stream.closeCh)
-	// Note: Don't close dataOut channel here as it might be used by other goroutines
-	// Channel will be garbage collected when stream is deleted
+	// Close dataOut to signal anyone reading from it
+	close(stream.dataOut)
 	delete(sm.streams, streamID)
 
 	if sm.onStreamClosed != nil {
@@ -153,7 +153,7 @@ func (s *Stream) CloseCh() <-chan struct{} {
 
 // Read implements io.Reader
 func (s *Stream) Read(p []byte) (n int, err error) {
-	if s.readBuf != nil && len(s.readBuf) > 0 {
+	if len(s.readBuf) > 0 {
 		n = copy(p, s.readBuf)
 		s.readBuf = s.readBuf[n:]
 		return n, nil

@@ -9,20 +9,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hydragon2m/tunnel-agent/internal/logger"
 	"github.com/hydragon2m/tunnel-agent/internal/metrics"
 )
 
 // LocalForwarder forward requests đến local services
 type LocalForwarder struct {
-	localURL   string
-	httpClient *http.Client
-	timeout    time.Duration
+	localServices map[string]string // subdomain -> localURL
+	defaultURL    string
+	httpClient    *http.Client
+	timeout       time.Duration
 }
 
 // NewLocalForwarder tạo LocalForwarder mới
-func NewLocalForwarder(localURL string, timeout time.Duration) *LocalForwarder {
+func NewLocalForwarder(defaultURL string, timeout time.Duration) *LocalForwarder {
 	return &LocalForwarder{
-		localURL: localURL,
+		localServices: make(map[string]string),
+		defaultURL:    defaultURL,
 		httpClient: &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
@@ -33,6 +36,32 @@ func NewLocalForwarder(localURL string, timeout time.Duration) *LocalForwarder {
 		},
 		timeout: timeout,
 	}
+}
+
+// AddService thêm mapping service mới
+func (lf *LocalForwarder) AddService(subdomain, localURL string) {
+	lf.localServices[subdomain] = localURL
+}
+
+// SetDefaultURL đặt default local URL
+func (lf *LocalForwarder) SetDefaultURL(url string) {
+	lf.defaultURL = url
+}
+
+// GetDefaultURL lấy default local URL
+func (lf *LocalForwarder) GetDefaultURL() string {
+	return lf.defaultURL
+}
+
+// GetSubdomains trả về danh sách các subdomain đã đăng ký
+func (lf *LocalForwarder) GetSubdomains() []string {
+	subs := make([]string, 0, len(lf.localServices))
+	for sub := range lf.localServices {
+		if sub != "" {
+			subs = append(subs, sub)
+		}
+	}
+	return subs
 }
 
 // ForwardRequest forward request từ Core đến local service
@@ -49,11 +78,20 @@ func (lf *LocalForwarder) ForwardRequest(ctx context.Context, stream *Stream, in
 		return fmt.Errorf("failed to parse request: %w", err)
 	}
 
-	// 2. Build local URL
-	localURL := lf.buildLocalURL(path, query)
+	// 2. Determine local URL based on Host header
+	localBaseURL := lf.determineLocalURL(headers.Get("Host"))
+	localURL := lf.buildLocalURL(localBaseURL, path, query)
 
-	// 3. Create request body from initial data + the stream itself for remaining data
-	bodyReader := io.MultiReader(bytes.NewReader(initialBody), stream)
+	// 3. Create local HTTP request
+	var bodyReader io.Reader
+	contentLength := headers.Get("Content-Length")
+	transferEncoding := headers.Get("Transfer-Encoding")
+
+	if (contentLength != "" && contentLength != "0") || transferEncoding != "" {
+		bodyReader = io.MultiReader(bytes.NewReader(initialBody), stream)
+	} else if len(initialBody) > 0 {
+		bodyReader = bytes.NewReader(initialBody)
+	}
 
 	// 4. Create local HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, method, localURL, bodyReader)
@@ -171,9 +209,31 @@ func (lf *LocalForwarder) parseRequest(data []byte) (string, string, string, htt
 	return method, path, query, headers, body, nil
 }
 
+// determineLocalURL quyết định local URL dựa trên host
+func (lf *LocalForwarder) determineLocalURL(host string) string {
+	if host == "" {
+		return lf.defaultURL
+	}
+
+	// Extract subdomain (assuming host is sub.domain.com or sub.localhost)
+	// We check if any of our keys match the start of the host
+	for sub, url := range lf.localServices {
+		if sub == "" {
+			continue
+		}
+		if strings.HasPrefix(host, sub+".") || host == sub {
+			logger.Debug("Matched local service", "host", host, "subdomain", sub, "url", url)
+			return url
+		}
+	}
+
+	logger.Debug("No mapping found for host, using default", "host", host, "default", lf.defaultURL)
+	return lf.defaultURL
+}
+
 // buildLocalURL build local service URL
-func (lf *LocalForwarder) buildLocalURL(path, query string) string {
-	url := lf.localURL
+func (lf *LocalForwarder) buildLocalURL(baseURL, path, query string) string {
+	url := baseURL
 	if !strings.HasSuffix(url, "/") && !strings.HasPrefix(path, "/") {
 		url += "/"
 	}

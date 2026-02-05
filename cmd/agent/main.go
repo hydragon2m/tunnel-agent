@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -33,7 +34,7 @@ var (
 	version = flag.String("version", "1.0.0", "Agent version")
 
 	// Local service config
-	localURL = flag.String("local", "http://localhost:3003", "Local service URL")
+	localServices = flag.String("local", "http://localhost:3003", "Local service(s) mapping. Format: [subdomain=]url,[subdomain2=]url2")
 
 	// Config
 	heartbeatInterval = flag.Duration("heartbeat", 10*time.Second, "Heartbeat interval")
@@ -69,7 +70,7 @@ func main() {
 		*agentID = envAgentID
 	}
 	if envLocal := os.Getenv("LOCAL"); envLocal != "" {
-		*localURL = envLocal
+		*localServices = envLocal
 	}
 	if envHeartbeat := os.Getenv("HEARTBEAT"); envHeartbeat != "" {
 		if duration, err := time.ParseDuration(envHeartbeat); err == nil {
@@ -145,10 +146,18 @@ func main() {
 	streamManager := client.NewStreamManager(connector)
 
 	// Create local forwarder
-	forwarder := client.NewLocalForwarder(*localURL, *requestTimeout)
+	forwarder := client.NewLocalForwarder("", *requestTimeout)
+	parseLocalServices(*localServices, forwarder)
+
+	// Create metadata with subdomains
+	metadata := make(map[string]string)
+	subs := forwarder.GetSubdomains()
+	if len(subs) > 0 {
+		metadata["subdomains"] = strings.Join(subs, ",")
+	}
 
 	// Create authenticator
-	authenticator := client.NewAuthenticator(*token, *agentID, *version, nil, nil)
+	authenticator := client.NewAuthenticator(*token, *agentID, *version, nil, metadata)
 
 	// Create heartbeat
 	heartbeat := client.NewHeartbeat(connector, *heartbeatInterval)
@@ -182,12 +191,31 @@ func main() {
 	})
 
 	connector.SetOnDisconnected(func() {
-		log.Println("Disconnected from server")
+		logger.Info("Disconnected from server")
 		dispatcher.Stop()
 	})
 
 	connector.SetOnError(func(err error) {
-		log.Printf("Connection error: %v", err)
+		logger.Error("Connection error", "error", err)
+	})
+
+	// Setup dispatcher callbacks
+	dispatcher.SetOnConnectionClosed(func() {
+		logger.Warn("Dispatcher connection closed, triggering reconnect")
+		go func() {
+			if err := connector.Reconnect(); err != nil {
+				logger.Error("Reconnect failed", "error", err)
+			}
+		}()
+	})
+
+	dispatcher.SetOnError(func(err error) {
+		logger.Error("Dispatcher error", "error", err)
+		go func() {
+			if err := connector.Reconnect(); err != nil {
+				logger.Error("Reconnect failed after dispatcher error", "error", err)
+			}
+		}()
 	})
 
 	// Setup dispatcher handlers
@@ -447,7 +475,10 @@ func handleStreamFrame(
 		// Data frame - forward to stream
 		stream, ok := streamManager.GetStream(frame.StreamID)
 		if !ok {
-			return client.ErrStreamNotFound
+			// If stream not found, it might have been closed already.
+			// Just ignore it to avoid connection drops.
+			logger.Debug("Received data for unknown stream (likely closed)", "streamID", frame.StreamID)
+			return nil
 		}
 
 		select {
@@ -470,6 +501,35 @@ func handleStreamFrame(
 	}
 
 	return nil
+}
+
+// parseLocalServices parses comma-separated service mappings
+func parseLocalServices(input string, forwarder *client.LocalForwarder) {
+	parts := strings.Split(input, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		if strings.Contains(part, "=") {
+			kv := strings.SplitN(part, "=", 2)
+			sub := strings.TrimSpace(kv[0])
+			url := strings.TrimSpace(kv[1])
+			if sub != "" && url != "" {
+				forwarder.AddService(sub, url)
+				logger.Info("Added local service mapping", "subdomain", sub, "url", url)
+				// If no default URL is set yet, use the first mapping as default
+				if forwarder.GetDefaultURL() == "" {
+					forwarder.SetDefaultURL(url)
+				}
+			}
+		} else {
+			// Default service
+			forwarder.AddService("", part)
+			logger.Info("Added default local service", "url", part)
+		}
+	}
 }
 
 // parseInt parses string to int

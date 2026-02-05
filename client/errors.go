@@ -11,4 +11,5 @@ var (
 	ErrAuthFailed          = errors.New("authentication failed")
 	ErrLocalServiceError   = errors.New("local service error")
 	ErrAlreadyRunning      = errors.New("dispatcher already running")
+	ErrInvalidFrameSize    = errors.New("invalid frame size")
 )

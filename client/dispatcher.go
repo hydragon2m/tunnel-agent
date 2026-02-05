@@ -29,6 +29,10 @@ type Dispatcher struct {
 
 	// Config
 	readTimeout time.Duration
+
+	// Callbacks
+	onConnectionClosed func()
+	onError            func(err error)
 }
 
 // NewDispatcher tạo Dispatcher mới
@@ -57,6 +61,16 @@ func (d *Dispatcher) SetControlHandler(handler func(frame *v1.Frame) error) {
 // SetStreamHandler set handler cho stream frames
 func (d *Dispatcher) SetStreamHandler(handler func(frame *v1.Frame) error) {
 	d.streamHandler = handler
+}
+
+// SetOnConnectionClosed set callback khi connection bị đóng
+func (d *Dispatcher) SetOnConnectionClosed(cb func()) {
+	d.onConnectionClosed = cb
+}
+
+// SetOnError set callback khi có lỗi xảy ra
+func (d *Dispatcher) SetOnError(cb func(err error)) {
+	d.onError = cb
 }
 
 // Start bắt đầu frame reading loop
@@ -106,16 +120,14 @@ func (d *Dispatcher) readLoop() {
 			connWithDeadline.SetReadDeadline(time.Now().Add(d.readTimeout))
 		}
 
-		// Set read deadline if connection supports it
-		if connWithDeadline, ok := conn.(interface{ SetReadDeadline(time.Time) error }); ok {
-			connWithDeadline.SetReadDeadline(time.Now().Add(d.readTimeout))
-		}
-
 		// 1. Read Frame Length
 		length, err := v1.ReadFrameLength(conn)
 		if err != nil {
 			if err == io.EOF {
 				logger.Debug("Connection closed (EOF)")
+				if d.onConnectionClosed != nil {
+					d.onConnectionClosed()
+				}
 				return
 			}
 			// Check timeout
@@ -125,6 +137,9 @@ func (d *Dispatcher) readLoop() {
 			}
 			logger.Warn("Frame length read error", "error", err)
 			metrics.GetMetrics().IncrementFramesError()
+			if d.onError != nil {
+				d.onError(err)
+			}
 			return
 		}
 
@@ -133,6 +148,9 @@ func (d *Dispatcher) readLoop() {
 			logger.Warn("Invalid frame size", "length", length)
 			metrics.GetMetrics().IncrementFramesError()
 			// Consume/discard? Or just close connection? Safe to close.
+			if d.onError != nil {
+				d.onError(ErrInvalidFrameSize)
+			}
 			return
 		}
 
@@ -145,6 +163,9 @@ func (d *Dispatcher) readLoop() {
 		if _, err := io.ReadFull(conn, buf[:length]); err != nil {
 			logger.Warn("Frame body read error", "error", err)
 			v1.PutBuffer(buf) // Return buffer on error
+			if d.onError != nil {
+				d.onError(err)
+			}
 			return
 		}
 
@@ -198,6 +219,9 @@ func (d *Dispatcher) readLoop() {
 			logger.Warn("Frame parse error", "error", err)
 			v1.PutBuffer(buf)
 			metrics.GetMetrics().IncrementFramesError()
+			if d.onError != nil {
+				d.onError(err)
+			}
 			return
 		}
 
