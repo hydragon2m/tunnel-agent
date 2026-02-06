@@ -460,14 +460,26 @@ func handleStreamFrame(
 					StreamID: frame.StreamID,
 					Payload:  []byte(err.Error()),
 				}
-				_ = connector.SendFrame(errorFrame)
+				if sendErr := connector.SendFrame(errorFrame); sendErr != nil {
+					logger.Error("Failed to send error frame",
+						"error", sendErr,
+						"streamID", frame.StreamID,
+						"originalError", err,
+					)
+					metrics.GetMetrics().IncrementFramesError()
+				}
 			} else {
 				// Update health check on success
 				localServiceCheck.UpdateCheck(health.HealthStatusHealthy, "Local service responding")
 			}
 
 			// EndStream flag is sent by stream.Close() which forwarder might have called or handle here
-			_ = stream.Close()
+			if closeErr := stream.Close(); closeErr != nil {
+				logger.Warn("Failed to close stream",
+					"error", closeErr,
+					"streamID", frame.StreamID,
+				)
+			}
 			streamManager.CloseStream(frame.StreamID)
 		}()
 

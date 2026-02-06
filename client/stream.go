@@ -200,8 +200,7 @@ func (s *Stream) Close() error {
 		StreamID: s.ID,
 		Payload:  nil,
 	}
-	_ = s.connector.SendFrame(frame)
-	return nil
+	return s.connector.SendFrame(frame)
 }
 
 // SetMetadata set metadata
