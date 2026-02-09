@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -48,6 +49,10 @@ var (
 	// Metrics
 	metricsEnabled = flag.Bool("metrics", false, "Enable metrics collection")
 	metricsPort    = flag.Int("metrics-port", 9091, "Metrics HTTP server port")
+
+	// Remote Config
+	remoteConfig = flag.Bool("remote", false, "Fetch mapping configuration from server")
+	mgmtAddr     = flag.String("mgmt", "http://localhost:9000", "Management API address")
 )
 
 func main() {
@@ -147,7 +152,13 @@ func main() {
 
 	// Create local forwarder
 	forwarder := client.NewLocalForwarder("", *requestTimeout)
-	parseLocalServices(*localServices, forwarder)
+
+	// Remote or Local Config
+	if *remoteConfig {
+		fetchRemoteConfig(*mgmtAddr, *token, forwarder)
+	} else {
+		parseLocalServices(*localServices, forwarder)
+	}
 
 	// Create metadata with subdomains
 	metadata := make(map[string]string)
@@ -541,6 +552,50 @@ func parseLocalServices(input string, forwarder *client.LocalForwarder) {
 			forwarder.AddService("", part)
 			logger.Info("Added default local service", "url", part)
 		}
+	}
+}
+
+// fetchRemoteConfig fetches mapping configuration from management API
+func fetchRemoteConfig(apiBase, token string, forwarder *client.LocalForwarder) {
+	logger.Info("Fetching remote configuration...", "api", apiBase)
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, _ := http.NewRequest("GET", apiBase+"/api/user/config", nil)
+	req.Header.Set("X-Tunnel-Token", token)
+
+	res, err := client.Do(req)
+	if err != nil {
+		logger.Error("Failed to fetch remote config", "error", err)
+		return
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		logger.Error("Failed to fetch remote config", "status", res.Status)
+		return
+	}
+
+	var config struct {
+		Mappings []struct {
+			Subdomain   string `json:"subdomain"`
+			LocalTarget string `json:"local_target"`
+		} `json:"mappings"`
+	}
+
+	if err := json.NewDecoder(res.Body).Decode(&config); err != nil {
+		logger.Error("Failed to decode remote config", "error", err)
+		return
+	}
+
+	for _, m := range config.Mappings {
+		forwarder.AddService(m.Subdomain, m.LocalTarget)
+		logger.Info("Added remote service mapping", "subdomain", m.Subdomain, "target", m.LocalTarget)
+		if forwarder.GetDefaultURL() == "" {
+			forwarder.SetDefaultURL(m.LocalTarget)
+		}
+	}
+
+	if len(config.Mappings) == 0 {
+		logger.Warn("No remote mappings found for this account")
 	}
 }
 

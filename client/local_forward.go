@@ -140,7 +140,7 @@ func (lf *LocalForwarder) ForwardRequest(ctx context.Context, stream *Stream, in
 func (lf *LocalForwarder) writeResponseHeader(w io.Writer, resp *http.Response) error {
 	var buf bytes.Buffer
 	// Response line
-	buf.WriteString(fmt.Sprintf("%s %d %s\r\n", resp.Proto, resp.StatusCode, resp.Status))
+	buf.WriteString(fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status))
 	// Headers
 	for key, values := range resp.Header {
 		for _, value := range values {
@@ -251,7 +251,7 @@ func (lf *LocalForwarder) buildResponse(resp *http.Response, body []byte) []byte
 	var buf bytes.Buffer
 
 	// Response line
-	buf.WriteString(fmt.Sprintf("%s %d %s\r\n", resp.Proto, resp.StatusCode, resp.Status))
+	buf.WriteString(fmt.Sprintf("%s %s\r\n", resp.Proto, resp.Status))
 
 	// Headers
 	for key, values := range resp.Header {
