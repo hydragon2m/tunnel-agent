@@ -233,11 +233,8 @@ func (lf *LocalForwarder) determineLocalURL(host string) string {
 
 // buildLocalURL build local service URL
 func (lf *LocalForwarder) buildLocalURL(baseURL, path, query string) string {
-	url := baseURL
-	if !strings.HasSuffix(url, "/") && !strings.HasPrefix(path, "/") {
-		url += "/"
-	}
-	url += strings.TrimPrefix(path, "/")
+	// Ensure single slash between base and path
+	url := strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(path, "/")
 
 	if query != "" {
 		url += "?" + query
